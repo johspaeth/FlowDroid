@@ -42,6 +42,7 @@ public class InfoflowConfiguration {
 		 * check whether it aliases with any value access
 		 */
 		Lazy
+		Boomerang
 	}
 
 	/**

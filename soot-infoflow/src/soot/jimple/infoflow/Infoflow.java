@@ -38,6 +38,7 @@ import soot.jimple.infoflow.InfoflowConfiguration.DataFlowSolver;
 import soot.jimple.infoflow.InfoflowConfiguration.PathConfiguration;
 import soot.jimple.infoflow.InfoflowConfiguration.SolverConfiguration;
 import soot.jimple.infoflow.aliasing.Aliasing;
+import soot.jimple.infoflow.aliasing.BoomerangPDSAliasStrategy;
 import soot.jimple.infoflow.aliasing.FlowSensitiveAliasStrategy;
 import soot.jimple.infoflow.aliasing.IAliasingStrategy;
 import soot.jimple.infoflow.aliasing.LazyAliasingStrategy;
@@ -808,6 +809,41 @@ public class Infoflow extends AbstractInfoflow {
 			backProblem = null;
 			backSolver = null;
 			aliasingStrategy = new LazyAliasingStrategy(manager);
+			break;
+		case Boomerang:
+			backwardsManager = new InfoflowManager(config, null, new BackwardsInfoflowCFG(iCfg), sourcesSinks,
+					taintWrapper, hierarchy, manager.getAccessPathFactory());
+			backProblem = new BackwardsInfoflowProblem(backwardsManager);
+
+			// We need to create the right data flow solver
+			SolverConfiguration solverConfig1 = config.getSolverConfiguration();
+			switch (solverConfig1.getDataFlowSolver()) {
+			case ContextFlowSensitive:
+				backSolver = new soot.jimple.infoflow.solver.fastSolver.InfoflowSolver(backProblem, executor);
+				break;
+			case FlowInsensitive:
+				backSolver = new soot.jimple.infoflow.solver.fastSolver.flowInsensitive.InfoflowSolver(backProblem,
+						executor);
+				break;
+			default:
+				throw new RuntimeException("Unsupported data flow solver");
+			}
+
+			backSolver.setMemoryManager(memoryManager);
+			backSolver.setPredecessorShorteningMode(
+					pathConfigToShorteningMode(manager.getConfig().getPathConfiguration()));
+			// backSolver.setEnableMergePointChecking(true);
+			backSolver.setMaxJoinPointAbstractions(solverConfig1.getMaxJoinPointAbstractions());
+			backSolver.setMaxCalleesPerCallSite(solverConfig1.getMaxCalleesPerCallSite());
+			backSolver.setSolverId(false);
+			backProblem.setTaintPropagationHandler(backwardsPropagationHandler);
+			backProblem.setTaintWrapper(taintWrapper);
+			if (nativeCallHandler != null)
+				backProblem.setNativeCallHandler(nativeCallHandler);
+
+			memoryWatcher.addSolver((IMemoryBoundedSolver) backSolver);
+
+			aliasingStrategy = new BoomerangPDSAliasStrategy(manager);
 			break;
 		default:
 			throw new RuntimeException("Unsupported aliasing algorithm");
