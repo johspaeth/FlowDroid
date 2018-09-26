@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import boomerang.preanalysis.BoomerangPretransformer;
 import soot.G;
 import soot.MethodOrMethodContext;
 import soot.PackManager;
@@ -267,6 +268,8 @@ public class Infoflow extends AbstractInfoflow {
 			// Initialize the source sink manager
 			if (sourcesSinks != null)
 				sourcesSinks.initialize();
+			BoomerangPretransformer.v().reset();
+			BoomerangPretransformer.v().apply();
 
 			// Perform constant propagation and remove dead code
 			if (config.getCodeEliminationMode() != CodeEliminationMode.NoCodeElimination) {

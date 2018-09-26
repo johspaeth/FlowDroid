@@ -2,7 +2,12 @@ package soot.jimple.infoflow.aliasing;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 import boomerang.BackwardQuery;
 import boomerang.Boomerang;
@@ -10,12 +15,14 @@ import boomerang.jimple.Field;
 import boomerang.jimple.Statement;
 import boomerang.jimple.Val;
 import boomerang.results.BackwardBoomerangResults;
+import heros.solver.Pair;
 import soot.Local;
 import soot.SootField;
 import soot.SootMethod;
 import soot.Type;
 import soot.Unit;
 import soot.Value;
+import soot.jimple.StaticFieldRef;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.InfoflowManager;
 import soot.jimple.infoflow.data.Abstraction;
@@ -30,6 +37,8 @@ import wpds.impl.Weight.NoWeight;
  * @author Johannes Spaeth
  */
 public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
+
+	private Multimap<Pair<SootMethod, Abstraction>, Pair<Unit, Abstraction>> incomingMap = HashMultimap.create();
 
 	public BoomerangPDSAliasStrategy(InfoflowManager manager) {
 		super(manager);
@@ -47,21 +56,58 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		// return statements,
 		// when there might be new alias in the caller scope.
 		if (src.containsInvokeExpr())
-			handleReturn(d1, src, taintSet, newAbs, base);
+			handleReturn(d1, src, taintSet, newAbs, base, convert(accessPath));
 		else
-			handleFieldWrite(d1, src, taintSet, newAbs, base);
+			handleFieldWrite(d1, src, taintSet, newAbs, base, convert(accessPath));
 	}
 
-	private void handleReturn(Abstraction d1, Stmt src, Set<Abstraction> taintSet, Abstraction newAbs, Local base) {
-		// TODO Auto-generated method stub
-
+	private List<Field> convert(AccessPath accessPath) {
+		List<Field> fields = Lists.newArrayList();
+		if (accessPath != null && accessPath.getFieldCount() > 0) {
+			for (SootField f : accessPath.getFields()) {
+				fields.add(new Field(f));
+			}
+		}
+		fields.add(Field.empty());
+		return fields;
 	}
 
-	private void handleFieldWrite(Abstraction d1, Stmt src, Set<Abstraction> taintSet, Abstraction newAbs, Local base) {
+	private void handleReturn(Abstraction d1, Stmt src, Set<Abstraction> taintSet, Abstraction newAbs, Local base,
+			List<Field> accessPath) {
 		if (base == null) {
-			System.out.println("Base is null: " + src);
+			System.out.println("Base is null: " + base + src);
 			return;
 		}
+		Boomerang boomerang = new Boomerang() {
+			@Override
+			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
+				return manager.getICFG();
+			}
+		};
+		SootMethod queryMethod = manager.getICFG().getMethodOf(src);
+		for (Unit pred : manager.getICFG().getPredsOf(src)) {
+			Statement queryStatement = new Statement((Stmt) pred, queryMethod);
+			BackwardQuery backwardQuery = new BackwardQuery(queryStatement, new Val(base, queryMethod), accessPath);
+			System.out.println(src + "   " + backwardQuery + accessPath);
+			BackwardBoomerangResults<NoWeight> results = boomerang.solve(backwardQuery);
+			Set<boomerang.util.AccessPath> boomerangResults = results.getAllAliases();
+			System.out.println(src + "   " + boomerangResults);
+			for (boomerang.util.AccessPath boomerangAp : boomerangResults) {
+				Abstraction flowDroidAccessPath = toAbstraction(boomerangAp, src, newAbs);
+				// add all access path to the taintSet for further propagation
+				if (flowDroidAccessPath != null)
+					taintSet.add(flowDroidAccessPath);
+			}
+		}
+	}
+
+	private void handleFieldWrite(Abstraction d1, Stmt src, Set<Abstraction> taintSet, Abstraction newAbs, Local base,
+			List<Field> fields) {
+		if (base == null) {
+			System.out.println("Base is null: " + base + src);
+			return;
+		}
+
 		Boomerang boomerang = new Boomerang() {
 			@Override
 			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
@@ -83,9 +129,9 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 	}
 
 	private Abstraction toAbstraction(boomerang.util.AccessPath ap, Stmt src, Abstraction newAbs) {
-		Local base = (Local) ap.getBase().value();
+		Local base = ap.getBase().isStatic() ? null : (Local) ap.getBase().value();
 		AccessPath fdAp = newAbs.getAccessPath();
-		if (ap.getFields().isEmpty()) {
+		if (ap.getFields().isEmpty() && !ap.getBase().isStatic()) {
 			return newAbs.deriveNewAbstraction(
 					manager.getAccessPathFactory().createAccessPath(base, fdAp.getFields(), fdAp.getBaseType(),
 							fdAp.getFieldTypes(), fdAp.getTaintSubFields(), false, false, fdAp.getArrayTaintType()),
@@ -97,21 +143,30 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 			Collection<Field> boomerangFields = ap.getFields();
 			ArrayList<SootField> fdFields = new ArrayList<>();
 			ArrayList<Type> fdFieldTypes = new ArrayList<>();
+			if (ap.getBase().isStatic()) {
+				StaticFieldRef ref = (StaticFieldRef) ap.getBase().value();
+				fdFields.add(ref.getField());
+				fdFieldTypes.add(ref.getField().getType());
+			}
 			for (Field f : boomerangFields) {
 				if (f.equals(Field.array()) || f.equals(Field.empty()) || f.equals(Field.epsilon()))
 					continue;
 				fdFields.add(f.getSootField());
 				fdFieldTypes.add(f.getSootField().getType());
 			}
-			for (SootField f : fdAp.getFields()) {
-				fdFields.add(f);
+			if (fdAp.getFieldCount() > 0) {
+				for (SootField f : fdAp.getFields()) {
+					fdFields.add(f);
+				}
+				for (Type f : fdAp.getFieldTypes()) {
+					fdFieldTypes.add(f);
+				}
 			}
-			for (Type f : fdAp.getFieldTypes()) {
-				fdFieldTypes.add(f);
-			}
-			return newAbs.deriveNewAbstraction(manager.getAccessPathFactory().createAccessPath(base,
-					fdFields.toArray(new SootField[] {}), base.getType(), fdFieldTypes.toArray(new Type[] {}),
-					fdAp.getTaintSubFields(), false, false, fdAp.getArrayTaintType()), src);
+			return newAbs.deriveNewAbstraction(
+					manager.getAccessPathFactory().createAccessPath(base, fdFields.toArray(new SootField[] {}),
+							(base != null ? base.getType() : null), fdFieldTypes.toArray(new Type[] {}),
+							fdAp.getTaintSubFields(), false, false, fdAp.getArrayTaintType()),
+					src);
 		}
 		// Collection<Field> fields = ap.getFields();
 		// ArrayList<SootField> fdFields = new ArrayList<>();
@@ -158,6 +213,12 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 	@Override
 	public void injectCallingContext(Abstraction d3, IInfoflowSolver fSolver, SootMethod callee, Unit callSite,
 			Abstraction source, Abstraction d1) {
+		// This is called whenever something is added to the incoming set of the forward
+		// solver of the
+		// FlowDroid IFDS solver.
+		Pair<SootMethod, Abstraction> calleepair = new Pair<>(callee, d3);
+		Pair<Unit, Abstraction> callerpair = new Pair<>(callSite, d1);
+		incomingMap.put(calleepair, callerpair);
 	}
 
 	@Override
@@ -167,7 +228,7 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 
 	@Override
 	public boolean requiresAnalysisOnReturn() {
-		return false;
+		return true;
 	}
 
 	@Override
@@ -178,8 +239,7 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 
 	@Override
 	public void cleanup() {
-		// TODO Auto-generated method stub
-
+		incomingMap.clear();
 	}
 
 }
