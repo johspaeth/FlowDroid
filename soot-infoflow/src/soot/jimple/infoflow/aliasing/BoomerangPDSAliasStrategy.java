@@ -15,6 +15,7 @@ import com.google.common.collect.Sets;
 import boomerang.BackwardQuery;
 import boomerang.Boomerang;
 import boomerang.Context;
+import boomerang.DefaultBoomerangOptions;
 import boomerang.ForwardQuery;
 import boomerang.IContextRequester;
 import boomerang.jimple.Field;
@@ -34,6 +35,7 @@ import soot.Unit;
 import soot.Value;
 import soot.jimple.StaticFieldRef;
 import soot.jimple.Stmt;
+import soot.jimple.infoflow.Infoflow;
 import soot.jimple.infoflow.InfoflowManager;
 import soot.jimple.infoflow.data.Abstraction;
 import soot.jimple.infoflow.data.AccessPath;
@@ -54,25 +56,40 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 	private Multimap<Pair<SootMethod, Abstraction>, Pair<Unit, Abstraction>> incomingMap = HashMultimap.create();
 	private Boomerang boomerang;
 	private Multimap<Statement, QueryWithAccessPath> aliasesAtCallSite = HashMultimap.create();
+	private Abstraction zeroValue;
 
 	public BoomerangPDSAliasStrategy(final InfoflowManager manager) {
 		super(manager);
-		boomerang = new Boomerang() {
+		System.out.println("SEEETING UP BOOMERANG");
+		boomerang = new Boomerang(new DefaultBoomerangOptions() {
+			@Override
+			public int analysisTimeoutMS() {
+				return Infoflow.aliasTimeoutInMilliSeconds;
+			}
+		}) {
 			@Override
 			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
 				return manager.getICFG();
 			}
+
 		};
+		System.out.println("END UP BOOMERANG");
+
 	}
 
 	@Override
 	public void computeAliasTaints(final Abstraction d1, final Stmt src, final Value targetValue,
 			Set<Abstraction> taintSet, SootMethod method, Abstraction newAbs) {
+		if (zeroValue == null && manager.getForwardSolver() != null
+				&& manager.getForwardSolver().getTabulationProblem() != null)
+			zeroValue = BoomerangPDSAliasStrategy.this.manager.getForwardSolver().getTabulationProblem()
+					.createZeroValue();
 		// Start the backwards solver
 		Abstraction bwAbs = newAbs.deriveInactiveAbstraction(src);
 		AccessPath accessPath = bwAbs.getAccessPath();
 		Local base = newAbs.getAccessPath().getPlainValue();
 
+		System.out.println("TRIGGER ");
 		// There are two different queries necessary: At field writes and at method
 		// return statements,
 		// when there might be new alias in the caller scope.
@@ -103,7 +120,12 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		for (QueryWithAccessPath alloc : aliasesAtCallSite.get(callSite)) {
 			AbstractBoomerangSolver<NoWeight> solver = boomerang.getSolvers().get(alloc.forwardQuery);
 			Set<boomerang.util.AccessPath> aliases = Sets.newHashSet();
+			System.out.println("REGISTER ON RETURN BOOMERANG ");
+
+			long before = System.currentTimeMillis();
 			solver.registerListener(new ExtractAllAliasListener<>(solver, aliases, callSite));
+			long after = System.currentTimeMillis();
+			Infoflow.aliasQueryTime += (after - before);
 			for (boomerang.util.AccessPath boomerangAp : aliases) {
 				if (solver.valueUsedInStatement(src, boomerangAp.getBase())) {
 					continue;
@@ -113,6 +135,7 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 				if (flowDroidAccessPath != null)
 					taintSet.add(flowDroidAccessPath);
 			}
+			System.out.println("FINISHED ON RETURN BOOMERANG ");
 		}
 	}
 
@@ -127,8 +150,14 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		Statement queryStatement = new Statement(src, queryMethod);
 		Val queryVal = new Val(base, queryMethod);
 		BackwardQuery backwardQuery = new BackwardQuery(queryStatement, queryVal);
+		System.out.println("START BOOMERANG " + backwardQuery);
+
+		long before = System.currentTimeMillis();
 		BackwardBoomerangResults<NoWeight> results = boomerang.backwardSolveUnderScope(backwardQuery,
 				new FlowDroidContextRequestor(d1));
+		if (results.isTimedout())
+			Infoflow.aliasQueryCounterTimeout++;
+		System.out.println("FINISHED BOOMERANG ");
 		for (final Entry<ForwardQuery, AbstractBoomerangResults<NoWeight>.Context> e : results.getAllocationSites()
 				.entrySet()) {
 			final AbstractBoomerangSolver<NoWeight> s = boomerang.getSolvers().get(e.getKey());
@@ -147,8 +176,11 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 				}
 			});
 		}
-
+		System.out.println("GET ALL ALIASEs ON WRITE BOOMERANG ");
 		Set<boomerang.util.AccessPath> boomerangResults = results.getAllAliases();
+		long after = System.currentTimeMillis();
+		Infoflow.aliasQueryTime += (after - before);
+		System.out.println("FINISHED ALL ALIASEs ON WRITE BOOMERANG ");
 		for (boomerang.util.AccessPath boomerangAp : boomerangResults) {
 			if (boomerangAp.getBase().equals(queryVal))
 				continue;
@@ -338,13 +370,12 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 			if (!(c instanceof FlowDroidContext)) {
 				throw new RuntimeException("Context must be an instanceof FlowDroidContext");
 			}
+
 			FlowDroidContext cont = (FlowDroidContext) c;
 			Statement callSite = cont.getStmt();
 			Abstraction abstraction = cont.getAbstraction();
 			Set<Context> boomerangCallerContexts = new HashSet<>();
-
-			if (BoomerangPDSAliasStrategy.this.manager.getForwardSolver().getTabulationProblem().createZeroValue()
-					.equals(d1)) {
+			if (zeroValue != null && zeroValue.equals(d1)) {
 				// If we reached the 0-Fact the analysis propagates to all callers
 				Collection<Unit> callersOf = icfg.getCallersOf(callSite.getMethod());
 				for (Unit call : callersOf) {

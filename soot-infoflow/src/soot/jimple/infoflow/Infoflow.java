@@ -9,6 +9,9 @@
  ******************************************************************************/
 package soot.jimple.infoflow;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Collection;
@@ -23,6 +26,8 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Stopwatch;
 
 import boomerang.preanalysis.BoomerangPretransformer;
 import soot.G;
@@ -99,6 +104,16 @@ import soot.options.Options;
  */
 public class Infoflow extends AbstractInfoflow {
 
+	public static int aliasTimeoutInMilliSeconds;
+
+	public static int SBandDACounter;
+
+	public static int aliasQueryCounter;
+
+	public static int aliasQueryCounterTimeout;
+
+	public static long aliasQueryTime;
+
 	private final Logger logger = LoggerFactory.getLogger(getClass());
 
 	private InfoflowResults results = null;
@@ -118,42 +133,40 @@ public class Infoflow extends AbstractInfoflow {
 	protected SootMethod dummyMainMethod = null;
 
 	/**
-	 * Creates a new instance of the InfoFlow class for analyzing plain Java
-	 * code without any references to APKs or the Android SDK.
+	 * Creates a new instance of the InfoFlow class for analyzing plain Java code
+	 * without any references to APKs or the Android SDK.
 	 */
 	public Infoflow() {
 		super();
 	}
 
 	/**
-	 * Creates a new instance of the Infoflow class for analyzing Android APK
-	 * files.
+	 * Creates a new instance of the Infoflow class for analyzing Android APK files.
 	 * 
-	 * @param androidPath
-	 *            If forceAndroidJar is false, this is the base directory of the
-	 *            platform files in the Android SDK. If forceAndroidJar is true,
-	 *            this is the full path of a single android.jar file.
-	 * @param forceAndroidJar
-	 *            True if a single platform JAR file shall be forced, false if
-	 *            Soot shall pick the appropriate platform version
+	 * @param androidPath     If forceAndroidJar is false, this is the base
+	 *                        directory of the platform files in the Android SDK. If
+	 *                        forceAndroidJar is true, this is the full path of a
+	 *                        single android.jar file.
+	 * @param forceAndroidJar True if a single platform JAR file shall be forced,
+	 *                        false if Soot shall pick the appropriate platform
+	 *                        version
 	 */
 	public Infoflow(String androidPath, boolean forceAndroidJar) {
 		super(null, androidPath, forceAndroidJar);
 	}
 
 	/**
-	 * Creates a new instance of the Infoflow class for analyzing Android APK
-	 * files.
+	 * Creates a new instance of the Infoflow class for analyzing Android APK files.
 	 * 
-	 * @param androidPath
-	 *            If forceAndroidJar is false, this is the base directory of the
-	 *            platform files in the Android SDK. If forceAndroidJar is true,
-	 *            this is the full path of a single android.jar file.
-	 * @param forceAndroidJar
-	 *            True if a single platform JAR file shall be forced, false if
-	 *            Soot shall pick the appropriate platform version
-	 * @param icfgFactory
-	 *            The interprocedural CFG to be used by the InfoFlowProblem
+	 * @param androidPath     If forceAndroidJar is false, this is the base
+	 *                        directory of the platform files in the Android SDK. If
+	 *                        forceAndroidJar is true, this is the full path of a
+	 *                        single android.jar file.
+	 * @param forceAndroidJar True if a single platform JAR file shall be forced,
+	 *                        false if Soot shall pick the appropriate platform
+	 *                        version
+	 * @param icfgFactory     The interprocedural CFG to be used by the
+	 *                        InfoFlowProblem
 	 */
 	public Infoflow(String androidPath, boolean forceAndroidJar, BiDirICFGFactory icfgFactory) {
 		super(icfgFactory, androidPath, forceAndroidJar);
@@ -315,8 +328,8 @@ public class Infoflow extends AbstractInfoflow {
 					oneSourceAtATime.nextSource();
 
 				// Create the executor that takes care of the workers
-				int numThreads = Runtime.getRuntime().availableProcessors();
-				InterruptableExecutor executor = createExecutor(numThreads, true);
+//				int numThreads = Runtime.getRuntime().availableProcessors();
+				InterruptableExecutor executor = createExecutor(1, true);
 
 				// Initialize the memory manager
 				IMemoryManager<Abstraction, Unit> memoryManager = createMemoryManager();
@@ -330,7 +343,8 @@ public class Infoflow extends AbstractInfoflow {
 
 				// Get the zero fact
 				Abstraction zeroValue = aliasingStrategy.getSolver() != null
-						? aliasingStrategy.getSolver().getTabulationProblem().createZeroValue() : null;
+						? aliasingStrategy.getSolver().getTabulationProblem().createZeroValue()
+						: null;
 
 				// Initialize the aliasing infrastructure
 				Aliasing aliasing = new Aliasing(aliasingStrategy, manager);
@@ -424,7 +438,7 @@ public class Infoflow extends AbstractInfoflow {
 
 					// Register the handler for interim results
 					TaintPropagationResults propagationResults = forwardProblem.getResults();
-					resultExecutor = createExecutor(numThreads, false);
+					resultExecutor = createExecutor(1, false);
 
 					// Create the path builder
 					final IAbstractionPathBuilder builder = new BatchPathBuilder(manager,
@@ -434,9 +448,48 @@ public class Infoflow extends AbstractInfoflow {
 					// initialize it before we start the taint tracking
 					if (config.getIncrementalResultReporting())
 						initializeIncrementalResultReporting(propagationResults, builder);
+					String outputFile = (System.getProperty("outputFile") != null ? System.getProperty("outputFile")
+							: "Report.csv");
+					try {
+						File idea = new File(outputFile);
+						FileWriter writer = null;
+						if (!idea.exists()) {
+							writer = new FileWriter(idea);
+							writer.write(
+									"Soot Class Path; FlowDroid Access path length; Alias Algorithm; Total analysis time (FlowDroid); #Alias Queries;#Alias Query Timeouts; #Queries (SB and DA); Memory usage; #Reports Flows; Time spent in Alias Analysis;");
+						} else {
+							writer = new FileWriter(outputFile, true);
+						}
+						writer.write("\n");
+						String scene = Scene.v().getSootClassPath() + ";";
+						writer.write(scene);
+						writer.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
 
+					Stopwatch timer = Stopwatch.createStarted();
 					forwardSolver.solve();
 					maxMemoryConsumption = Math.max(maxMemoryConsumption, getUsedMemory());
+
+					try {
+						FileWriter writer = new FileWriter(outputFile, true);
+						writer.write(this.getConfig().getAccessPathLength() + ";");
+						writer.write(this.getConfig().getAliasingAlgorithm().name() + ";");
+						String time = (timer.elapsed(TimeUnit.MILLISECONDS)) + ";";
+						writer.write(time);
+						String queries = Infoflow.aliasQueryCounter + ";";
+						writer.write(queries);
+						String timeouts = Infoflow.aliasQueryCounterTimeout + ";";
+						writer.write(timeouts);
+						queries = Infoflow.SBandDACounter + ";";
+						writer.write(queries);
+						queries = maxMemoryConsumption + ";";
+						writer.write(queries);
+						writer.close();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
 
 					// Not really nice, but sometimes Heros returns before all
 					// executor tasks are actually done. This way, we give it a
@@ -549,6 +602,16 @@ public class Infoflow extends AbstractInfoflow {
 						}
 					} else {
 						memoryWatcher.addSolver(builder);
+						try {
+							FileWriter writer = new FileWriter(outputFile, true);
+							String resultSize = results.getResults().size() + ";";
+							writer.write(resultSize);
+							String aliasQueryTime = Infoflow.aliasQueryTime + ";";
+							writer.write(aliasQueryTime);
+							writer.close();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
 						builder.computeTaintPaths(res);
 						res = null;
 
@@ -661,12 +724,10 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Initializes the mechanism for incremental result reporting
 	 * 
-	 * @param propagationResults
-	 *            A reference to the result object of the forward data flow
-	 *            solver
-	 * @param builder
-	 *            The path builder to use for reconstructing the taint
-	 *            propagation paths
+	 * @param propagationResults A reference to the result object of the forward
+	 *                           data flow solver
+	 * @param builder            The path builder to use for reconstructing the
+	 *                           taint propagation paths
 	 */
 	private void initializeIncrementalResultReporting(TaintPropagationResults propagationResults,
 			final IAbstractionPathBuilder builder) {
@@ -702,8 +763,8 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Checks the configuration of the data flow solver for errors and
-	 * automatically fixes some common issues
+	 * Checks the configuration of the data flow solver for errors and automatically
+	 * fixes some common issues
 	 */
 	private void checkAndFixConfiguration() {
 		if (config.getEnableStaticFieldTracking() && config.getAccessPathLength() == 0)
@@ -720,12 +781,11 @@ public class Infoflow extends AbstractInfoflow {
 
 	/**
 	 * Removes all abstractions from the given set that arrive at the same sink
-	 * statement as another abstraction, but cover less tainted variables. If,
-	 * e.g., a.b.* and a.* arrive at the same sink, a.b.* is already covered by
-	 * a.* and can thus safely be removed.
+	 * statement as another abstraction, but cover less tainted variables. If, e.g.,
+	 * a.b.* and a.* arrive at the same sink, a.b.* is already covered by a.* and
+	 * can thus safely be removed.
 	 * 
-	 * @param res
-	 *            The result set from which to remove all entailed abstractions
+	 * @param res The result set from which to remove all entailed abstractions
 	 */
 	private void removeEntailedAbstractions(Set<AbstractionAtSink> res) {
 		for (Iterator<AbstractionAtSink> absAtSinkIt = res.iterator(); absAtSinkIt.hasNext();) {
@@ -744,17 +804,12 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Initializes the alias analysis
 	 * 
-	 * @param sourcesSinks
-	 *            The set of sources and sinks
-	 * @param iCfg
-	 *            The interprocedural control flow graph
-	 * @param executor
-	 *            The executor in which to run concurrent tasks
-	 * @param memoryManager
-	 *            The memory manager for rducing the memory load during IFDS
-	 *            propagation
-	 * @return The alias analysis implementation to use for the data flow
-	 *         analysis
+	 * @param sourcesSinks  The set of sources and sinks
+	 * @param iCfg          The interprocedural control flow graph
+	 * @param executor      The executor in which to run concurrent tasks
+	 * @param memoryManager The memory manager for rducing the memory load during
+	 *                      IFDS propagation
+	 * @return The alias analysis implementation to use for the data flow analysis
 	 */
 	private IAliasingStrategy createAliasAnalysis(final ISourceSinkManager sourcesSinks, IInfoflowCFG iCfg,
 			InterruptableExecutor executor, IMemoryManager<Abstraction, Unit> memoryManager) {
@@ -856,12 +911,11 @@ public class Infoflow extends AbstractInfoflow {
 
 	/**
 	 * Gets the path shortening mode that shall be applied given a certain path
-	 * reconstruction configuration. This method computes the most aggressive
-	 * path shortening that is possible without eliminating data that is
-	 * necessary for the requested path reconstruction.
+	 * reconstruction configuration. This method computes the most aggressive path
+	 * shortening that is possible without eliminating data that is necessary for
+	 * the requested path reconstruction.
 	 * 
-	 * @param pathConfiguration
-	 *            The path reconstruction configuration
+	 * @param pathConfiguration The path reconstruction configuration
 	 * @return The computed path shortening mode
 	 */
 	private PredecessorShorteningMode pathConfigToShorteningMode(PathConfiguration pathConfiguration) {
@@ -881,8 +935,8 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Creates the memory manager that helps reduce the memory consumption of
-	 * the data flow analysis
+	 * Creates the memory manager that helps reduce the memory consumption of the
+	 * data flow analysis
 	 * 
 	 * @return The memory manager object
 	 */
@@ -899,11 +953,9 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Creates the IFDS solver for the forward data flow problem
 	 * 
-	 * @param executor
-	 *            The executor in which to run the tasks or propagating IFDS
-	 *            edges
-	 * @param forwardProblem
-	 *            The implementation of the forward problem
+	 * @param executor       The executor in which to run the tasks or propagating
+	 *                       IFDS edges
+	 * @param forwardProblem The implementation of the forward problem
 	 * @return The solver that solves the forward taint analysis problem
 	 */
 	private IInfoflowSolver createForwardSolver(InterruptableExecutor executor, InfoflowProblem forwardProblem) {
@@ -948,8 +1000,7 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Runs all code optimizers
 	 * 
-	 * @param sourcesSinks
-	 *            The SourceSinkManager
+	 * @param sourcesSinks The SourceSinkManager
 	 */
 	private void eliminateDeadCode(ISourceSinkManager sourcesSinks) {
 		InfoflowManager dceManager = new InfoflowManager(config, null, new InfoflowCFG(), null, null, null,
@@ -963,11 +1014,9 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Creates a new executor object for spawning worker threads
 	 * 
-	 * @param numThreads
-	 *            The number of threads to use
-	 * @param allowSetSemantics
-	 *            True if the executor shall have thread semantics, i.e., never
-	 *            schedule the same task twice
+	 * @param numThreads        The number of threads to use
+	 * @param allowSetSemantics True if the executor shall have thread semantics,
+	 *                          i.e., never schedule the same task twice
 	 * @return The generated executor
 	 */
 	private InterruptableExecutor createExecutor(int numThreads, boolean allowSetSemantics) {
@@ -1021,12 +1070,11 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Gets whether the given method is a valid seen when scanning for sources
-	 * and sinks. A method is a valid seed it it (or one of its transitive
-	 * callees) can contain calls to source or sink methods.
+	 * Gets whether the given method is a valid seen when scanning for sources and
+	 * sinks. A method is a valid seed it it (or one of its transitive callees) can
+	 * contain calls to source or sink methods.
 	 * 
-	 * @param sm
-	 *            The method to check
+	 * @param sm The method to check
 	 * @return True if this method or one of its transitive callees can contain
 	 *         sources or sinks, otherwise false
 	 */
@@ -1047,16 +1095,14 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Scans the given method for sources and sinks contained in it. Sinks are
-	 * just counted, sources are added to the InfoflowProblem as seeds.
+	 * Scans the given method for sources and sinks contained in it. Sinks are just
+	 * counted, sources are added to the InfoflowProblem as seeds.
 	 * 
-	 * @param sourcesSinks
-	 *            The SourceSinkManager to be used for identifying sources and
-	 *            sinks
-	 * @param forwardProblem
-	 *            The InfoflowProblem in which to register the sources as seeds
-	 * @param m
-	 *            The method to scan for sources and sinks
+	 * @param sourcesSinks   The SourceSinkManager to be used for identifying
+	 *                       sources and sinks
+	 * @param forwardProblem The InfoflowProblem in which to register the sources as
+	 *                       seeds
+	 * @param m              The method to scan for sources and sinks
 	 * @return The number of sinks found in this method
 	 */
 	private int scanMethodForSourcesSinks(final ISourceSinkManager sourcesSinks, InfoflowProblem forwardProblem,
@@ -1112,8 +1158,7 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Adds a handler that is called when information flow results are available
 	 * 
-	 * @param handler
-	 *            The handler to add
+	 * @param handler The handler to add
 	 */
 	public void addResultsAvailableHandler(ResultsAvailableHandler handler) {
 		this.onResultsAvailable.add(handler);
@@ -1122,8 +1167,7 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Sets a handler which is invoked whenever a taint is propagated
 	 * 
-	 * @param handler
-	 *            The handler to be invoked when propagating taints
+	 * @param handler The handler to be invoked when propagating taints
 	 */
 	public void setTaintPropagationHandler(TaintPropagationHandler handler) {
 		this.taintPropagationHandler = handler;
@@ -1132,19 +1176,16 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Sets a handler which is invoked whenever an alias is propagated backwards
 	 * 
-	 * @param handler
-	 *            The handler to be invoked when propagating aliases
+	 * @param handler The handler to be invoked when propagating aliases
 	 */
 	public void setBackwardsPropagationHandler(TaintPropagationHandler handler) {
 		this.backwardsPropagationHandler = handler;
 	}
 
 	/**
-	 * Removes a handler that is called when information flow results are
-	 * available
+	 * Removes a handler that is called when information flow results are available
 	 * 
-	 * @param handler
-	 *            The handler to remove
+	 * @param handler The handler to remove
 	 */
 	public void removeResultsAvailableHandler(ResultsAvailableHandler handler) {
 		onResultsAvailable.remove(handler);
@@ -1161,10 +1202,9 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Gets the concrete set of sources that have been collected in preparation
-	 * for the taint analysis. This method will return null if source and sink
-	 * logging has not been enabled (see InfoflowConfiguration.
-	 * setLogSourcesAndSinks()),
+	 * Gets the concrete set of sources that have been collected in preparation for
+	 * the taint analysis. This method will return null if source and sink logging
+	 * has not been enabled (see InfoflowConfiguration. setLogSourcesAndSinks()),
 	 * 
 	 * @return The set of sources collected for taint analysis
 	 */
@@ -1173,10 +1213,9 @@ public class Infoflow extends AbstractInfoflow {
 	}
 
 	/**
-	 * Gets the concrete set of sinks that have been collected in preparation
-	 * for the taint analysis. This method will return null if source and sink
-	 * logging has not been enabled (see InfoflowConfiguration.
-	 * setLogSourcesAndSinks()),
+	 * Gets the concrete set of sinks that have been collected in preparation for
+	 * the taint analysis. This method will return null if source and sink logging
+	 * has not been enabled (see InfoflowConfiguration. setLogSourcesAndSinks()),
 	 * 
 	 * @return The set of sinks collected for taint analysis
 	 */
@@ -1187,17 +1226,16 @@ public class Infoflow extends AbstractInfoflow {
 	/**
 	 * Sets the factory to be used for creating memory managers
 	 * 
-	 * @param factory
-	 *            The memory manager factory to use
+	 * @param factory The memory manager factory to use
 	 */
 	public void setMemoryManagerFactory(IMemoryManagerFactory factory) {
 		this.memoryManagerFactory = factory;
 	}
 
 	/**
-	 * Aborts the data flow analysis. This is useful when the analysis
-	 * controller is running in a different thread and the main thread (e.g., a
-	 * GUI) wants to abort the analysis
+	 * Aborts the data flow analysis. This is useful when the analysis controller is
+	 * running in a different thread and the main thread (e.g., a GUI) wants to
+	 * abort the analysis
 	 */
 	public void abortAnalysis() {
 		ISolverTerminationReason reason = new AbortRequestedReason();
