@@ -132,7 +132,6 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		for (final Entry<ForwardQuery, AbstractBoomerangResults<NoWeight>.Context> e : results.getAllocationSites()
 				.entrySet()) {
 			final AbstractBoomerangSolver<NoWeight> s = boomerang.getSolvers().get(e.getKey());
-			System.out.println(e.getKey());
 			s.getCallAutomaton().registerListener(new StackListener<Statement, INode<Val>, NoWeight>(
 					s.getCallAutomaton(), new SingleNode<Val>(queryVal), queryStatement) {
 
@@ -150,7 +149,6 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		}
 
 		Set<boomerang.util.AccessPath> boomerangResults = results.getAllAliases();
-		System.out.println(src + "   " + boomerangResults);
 		for (boomerang.util.AccessPath boomerangAp : boomerangResults) {
 			if (boomerangAp.getBase().equals(queryVal))
 				continue;
