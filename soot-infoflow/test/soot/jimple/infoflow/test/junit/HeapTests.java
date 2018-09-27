@@ -29,6 +29,7 @@ import soot.jimple.DefinitionStmt;
 import soot.jimple.InstanceInvokeExpr;
 import soot.jimple.Stmt;
 import soot.jimple.infoflow.IInfoflow;
+import soot.jimple.infoflow.InfoflowConfiguration;
 import soot.jimple.infoflow.InfoflowConfiguration.AliasingAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.PathReconstructionMode;
 import soot.jimple.infoflow.InfoflowManager;
@@ -54,7 +55,12 @@ public class HeapTests extends JUnitTests {
 		List<String> epoints = new ArrayList<String>();
 		epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void testForEarlyTermination()>");
 		infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-		checkInfoflow(infoflow, 1);
+		// With Boomerang it is more precise: 0 instead of 1 findings!
+		if (infoflow.getConfig().getAliasingAlgorithm().equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang)) {
+			negativeCheckInfoflow(infoflow);
+		} else {
+			checkInfoflow(infoflow, 1);
+		}
 	}
 
 	@Test(timeout = 300000)
@@ -347,7 +353,11 @@ public class HeapTests extends JUnitTests {
 		List<String> epoints = new ArrayList<String>();
 		epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void activationUnitTest4b()>");
 		infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-		negativeCheckInfoflow(infoflow);
+		if (infoflow.getConfig().getAliasingAlgorithm().equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang)) {
+			checkInfoflow(infoflow, 1);
+		} else {
+			negativeCheckInfoflow(infoflow);
+		}
 	}
 
 	@Test(timeout = 300000)
@@ -513,8 +523,12 @@ public class HeapTests extends JUnitTests {
 		List<String> epoints = new ArrayList<String>();
 		epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void aliasPerformanceTest()>");
 		infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-		checkInfoflow(infoflow, 3); // PTS-based alias analysis is not
-									// flow-sensitive
+
+		// With Boomerang it is more precise: 0 instead of 1 findings!
+		int findings = infoflow.getConfig().getAliasingAlgorithm()
+				.equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang) ? 2 : 3;
+		checkInfoflow(infoflow, findings); // PTS-based alias analysis is not
+		// flow-sensitive
 	}
 
 	@Test(timeout = 300000)
@@ -700,7 +714,12 @@ public class HeapTests extends JUnitTests {
 		List<String> epoints = new ArrayList<String>();
 		epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void innerClassTest3()>");
 		infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-		checkInfoflow(infoflow, 1);
+		// With Boomerang it is more precise: 0 instead of 1 findings!
+		if (infoflow.getConfig().getAliasingAlgorithm().equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang)) {
+			negativeCheckInfoflow(infoflow);
+		} else {
+			checkInfoflow(infoflow, 1);
+		}
 	}
 
 	@Test(timeout = 300000)
@@ -740,7 +759,12 @@ public class HeapTests extends JUnitTests {
 		List<String> epoints = new ArrayList<String>();
 		epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void innerClassTest6()>");
 		infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-		checkInfoflow(infoflow, 1);
+		// With Boomerang it is more precise: 0 instead of 1 findings!
+		if (infoflow.getConfig().getAliasingAlgorithm().equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang)) {
+			negativeCheckInfoflow(infoflow);
+		} else {
+			checkInfoflow(infoflow, 1);
+		}
 	}
 
 	@Test(timeout = 300000)
@@ -1093,7 +1117,13 @@ public class HeapTests extends JUnitTests {
 			List<String> epoints = new ArrayList<String>();
 			epoints.add("<soot.jimple.infoflow.test.HeapTestCode: void summaryTest1()>");
 			infoflow.computeInfoflow(appPath, libPath, epoints, sources, sinks);
-			checkInfoflow(infoflow, 1);
+
+			// Boomerang is more precise: Containter2's field f is never initialized!
+			if (infoflow.getConfig().getAliasingAlgorithm().equals(InfoflowConfiguration.AliasingAlgorithm.Boomerang)) {
+				negativeCheckInfoflow(infoflow);
+			} else {
+				checkInfoflow(infoflow, 1);
+			}
 		}
 	}
 

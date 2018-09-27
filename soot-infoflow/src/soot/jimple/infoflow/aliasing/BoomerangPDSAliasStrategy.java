@@ -2,19 +2,29 @@ package soot.jimple.infoflow.aliasing;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.Set;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Sets;
 
 import boomerang.BackwardQuery;
 import boomerang.Boomerang;
+import boomerang.Context;
+import boomerang.ForwardQuery;
+import boomerang.IContextRequester;
 import boomerang.jimple.Field;
 import boomerang.jimple.Statement;
 import boomerang.jimple.Val;
+import boomerang.results.AbstractBoomerangResults;
 import boomerang.results.BackwardBoomerangResults;
+import boomerang.results.ExtractAllAliasListener;
+import boomerang.solver.AbstractBoomerangSolver;
+import heros.InterproceduralCFG;
 import heros.solver.Pair;
 import soot.Local;
 import soot.SootField;
@@ -29,6 +39,9 @@ import soot.jimple.infoflow.data.Abstraction;
 import soot.jimple.infoflow.data.AccessPath;
 import soot.jimple.infoflow.solver.IInfoflowSolver;
 import soot.jimple.toolkits.ide.icfg.BiDiInterproceduralCFG;
+import sync.pds.solver.nodes.INode;
+import sync.pds.solver.nodes.SingleNode;
+import wpds.impl.StackListener;
 import wpds.impl.Weight.NoWeight;
 
 /**
@@ -39,9 +52,17 @@ import wpds.impl.Weight.NoWeight;
 public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 
 	private Multimap<Pair<SootMethod, Abstraction>, Pair<Unit, Abstraction>> incomingMap = HashMultimap.create();
+	private Boomerang boomerang;
+	private Multimap<Statement, QueryWithAccessPath> aliasesAtCallSite = HashMultimap.create();
 
-	public BoomerangPDSAliasStrategy(InfoflowManager manager) {
+	public BoomerangPDSAliasStrategy(final InfoflowManager manager) {
 		super(manager);
+		boomerang = new Boomerang() {
+			@Override
+			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
+				return manager.getICFG();
+			}
+		};
 	}
 
 	@Override
@@ -78,22 +99,16 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 			System.out.println("Base is null: " + base + src);
 			return;
 		}
-		Boomerang boomerang = new Boomerang() {
-			@Override
-			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
-				return manager.getICFG();
-			}
-		};
-		SootMethod queryMethod = manager.getICFG().getMethodOf(src);
-		for (Unit pred : manager.getICFG().getPredsOf(src)) {
-			Statement queryStatement = new Statement((Stmt) pred, queryMethod);
-			BackwardQuery backwardQuery = new BackwardQuery(queryStatement, new Val(base, queryMethod), accessPath);
-			System.out.println(src + "   " + backwardQuery + accessPath);
-			BackwardBoomerangResults<NoWeight> results = boomerang.solve(backwardQuery);
-			Set<boomerang.util.AccessPath> boomerangResults = results.getAllAliases();
-			System.out.println(src + "   " + boomerangResults);
-			for (boomerang.util.AccessPath boomerangAp : boomerangResults) {
-				Abstraction flowDroidAccessPath = toAbstraction(boomerangAp, src, newAbs);
+		Statement callSite = new Statement((Stmt) src, manager.getICFG().getMethodOf(src));
+		for (QueryWithAccessPath alloc : aliasesAtCallSite.get(callSite)) {
+			AbstractBoomerangSolver<NoWeight> solver = boomerang.getSolvers().get(alloc.forwardQuery);
+			Set<boomerang.util.AccessPath> aliases = Sets.newHashSet();
+			solver.registerListener(new ExtractAllAliasListener<>(solver, aliases, callSite));
+			for (boomerang.util.AccessPath boomerangAp : aliases) {
+				if (solver.valueUsedInStatement(src, boomerangAp.getBase())) {
+					continue;
+				}
+				Abstraction flowDroidAccessPath = toAbstraction(boomerangAp, src, alloc.accessPath);
 				// add all access path to the taintSet for further propagation
 				if (flowDroidAccessPath != null)
 					taintSet.add(flowDroidAccessPath);
@@ -101,30 +116,96 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		}
 	}
 
-	private void handleFieldWrite(Abstraction d1, Stmt src, Set<Abstraction> taintSet, Abstraction newAbs, Local base,
-			List<Field> fields) {
+	private void handleFieldWrite(Abstraction d1, Stmt src, Set<Abstraction> taintSet, final Abstraction newAbs,
+			Local base, List<Field> fields) {
 		if (base == null) {
 			System.out.println("Base is null: " + base + src);
 			return;
 		}
 
-		Boomerang boomerang = new Boomerang() {
-			@Override
-			public BiDiInterproceduralCFG<Unit, SootMethod> icfg() {
-				return manager.getICFG();
-			}
-		};
 		SootMethod queryMethod = manager.getICFG().getMethodOf(src);
 		Statement queryStatement = new Statement(src, queryMethod);
-		BackwardQuery backwardQuery = new BackwardQuery(queryStatement, new Val(base, queryMethod));
-		BackwardBoomerangResults<NoWeight> results = boomerang.solve(backwardQuery);
+		Val queryVal = new Val(base, queryMethod);
+		BackwardQuery backwardQuery = new BackwardQuery(queryStatement, queryVal);
+		BackwardBoomerangResults<NoWeight> results = boomerang.backwardSolveUnderScope(backwardQuery,
+				new FlowDroidContextRequestor(d1));
+		for (final Entry<ForwardQuery, AbstractBoomerangResults<NoWeight>.Context> e : results.getAllocationSites()
+				.entrySet()) {
+			final AbstractBoomerangSolver<NoWeight> s = boomerang.getSolvers().get(e.getKey());
+			System.out.println(e.getKey());
+			s.getCallAutomaton().registerListener(new StackListener<Statement, INode<Val>, NoWeight>(
+					s.getCallAutomaton(), new SingleNode<Val>(queryVal), queryStatement) {
+
+				@Override
+				public void anyContext(Statement end) {
+				}
+
+				@Override
+				public void stackElement(Statement callSite, Statement parent) {
+					for (Statement cs : s.getPredsOf(parent)) {
+						aliasesAtCallSite.put(cs, new QueryWithAccessPath(e.getKey(), newAbs));
+					}
+				}
+			});
+		}
+
 		Set<boomerang.util.AccessPath> boomerangResults = results.getAllAliases();
 		System.out.println(src + "   " + boomerangResults);
 		for (boomerang.util.AccessPath boomerangAp : boomerangResults) {
+			if (boomerangAp.getBase().equals(queryVal))
+				continue;
 			Abstraction flowDroidAccessPath = toAbstraction(boomerangAp, src, newAbs);
 			// add all access path to the taintSet for further propagation
 			if (flowDroidAccessPath != null)
 				taintSet.add(flowDroidAccessPath);
+		}
+	}
+
+	private class QueryWithAccessPath {
+		final ForwardQuery forwardQuery;
+		final Abstraction accessPath;
+
+		public QueryWithAccessPath(ForwardQuery q, Abstraction newAbs) {
+			this.forwardQuery = q;
+			this.accessPath = newAbs;
+		}
+
+		@Override
+		public int hashCode() {
+			final int prime = 31;
+			int result = 1;
+			result = prime * result + getOuterType().hashCode();
+			result = prime * result + ((accessPath == null) ? 0 : accessPath.hashCode());
+			result = prime * result + ((forwardQuery == null) ? 0 : forwardQuery.hashCode());
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (obj == null)
+				return false;
+			if (getClass() != obj.getClass())
+				return false;
+			QueryWithAccessPath other = (QueryWithAccessPath) obj;
+			if (!getOuterType().equals(other.getOuterType()))
+				return false;
+			if (accessPath == null) {
+				if (other.accessPath != null)
+					return false;
+			} else if (!accessPath.equals(other.accessPath))
+				return false;
+			if (forwardQuery == null) {
+				if (other.forwardQuery != null)
+					return false;
+			} else if (!forwardQuery.equals(other.forwardQuery))
+				return false;
+			return true;
+		}
+
+		private BoomerangPDSAliasStrategy getOuterType() {
+			return BoomerangPDSAliasStrategy.this;
 		}
 	}
 
@@ -240,6 +321,133 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 	@Override
 	public void cleanup() {
 		incomingMap.clear();
+		boomerang = null;
+		aliasesAtCallSite.clear();
+		aliasesAtCallSite = null;
 	}
 
+	private class FlowDroidContextRequestor implements IContextRequester {
+		private final Abstraction d1;
+		private InterproceduralCFG<Unit, SootMethod> icfg;
+
+		private FlowDroidContextRequestor(Abstraction d1) {
+			this.d1 = d1;
+			this.icfg = BoomerangPDSAliasStrategy.this.manager.getICFG();
+		}
+
+		@Override
+		public Collection<Context> getCallSiteOf(Context c) {
+			if (!(c instanceof FlowDroidContext)) {
+				throw new RuntimeException("Context must be an instanceof FlowDroidContext");
+			}
+			FlowDroidContext cont = (FlowDroidContext) c;
+			Statement callSite = cont.getStmt();
+			Abstraction abstraction = cont.getAbstraction();
+			Set<Context> boomerangCallerContexts = new HashSet<>();
+
+			if (BoomerangPDSAliasStrategy.this.manager.getForwardSolver().getTabulationProblem().createZeroValue()
+					.equals(d1)) {
+				// If we reached the 0-Fact the analysis propagates to all callers
+				Collection<Unit> callersOf = icfg.getCallersOf(callSite.getMethod());
+				for (Unit call : callersOf) {
+					SootMethod callee = icfg.getMethodOf(call);
+					if (isIgnoredMethod(callee))
+						continue;
+					Statement calleeCallSite = new Statement((Stmt) call, callee);
+					FlowDroidContext newContext = new FlowDroidContext(calleeCallSite, d1);
+					boomerangCallerContexts.add(newContext);
+				}
+				return boomerangCallerContexts;
+			}
+
+			// If we did not has the 0-Fact as start fact, we query the incomingMap to see
+			// via which
+			// callsite the forward analysis entered a method
+			Collection<Pair<Unit, Abstraction>> callerContexts = incomingMap
+					.get(new Pair<SootMethod, Abstraction>(callSite.getMethod(), abstraction));
+
+			for (Pair<Unit, Abstraction> callerContext : callerContexts) {
+				SootMethod calleeMethod = icfg.getMethodOf(callerContext.getO1());
+				if (isIgnoredMethod(calleeMethod))
+					continue;
+				Statement calleeStatement = new Statement((Stmt) callerContext.getO1(), calleeMethod);
+				FlowDroidContext newContext = new FlowDroidContext(calleeStatement, callerContext.getO2());
+				boomerangCallerContexts.add(newContext);
+			}
+			return boomerangCallerContexts;
+		}
+
+		@Override
+		public Context initialContext(Statement stmt) {
+			return new FlowDroidContext(stmt, d1);
+		}
+
+	}
+
+	private class FlowDroidContext implements Context {
+		private Statement stmt;
+		private Abstraction abs;
+		private SootMethod method;
+
+		public FlowDroidContext(Statement stmt, Abstraction abs) {
+			this.stmt = stmt;
+			this.abs = abs;
+		}
+
+		public Abstraction getAbstraction() {
+			return abs;
+		}
+
+		@Override
+		public Statement getStmt() {
+			return stmt;
+		}
+
+		public String toString() {
+			return "FDContext[" + stmt + ", " + abs + "," + method + "]";
+		}
+
+		@Override
+		public int hashCode() {
+			final int prime = 31;
+			int result = 1;
+			result = prime * result + getOuterType().hashCode();
+			result = prime * result + ((abs == null) ? 0 : abs.hashCode());
+			result = prime * result + ((stmt == null) ? 0 : stmt.hashCode());
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (obj == null)
+				return false;
+			if (getClass() != obj.getClass())
+				return false;
+			FlowDroidContext other = (FlowDroidContext) obj;
+			if (!getOuterType().equals(other.getOuterType()))
+				return false;
+			if (abs == null) {
+				if (other.abs != null)
+					return false;
+			} else if (!abs.equals(other.abs))
+				return false;
+			if (stmt == null) {
+				if (other.stmt != null)
+					return false;
+			} else if (!stmt.equals(other.stmt))
+				return false;
+			return true;
+		}
+
+		private BoomerangPDSAliasStrategy getOuterType() {
+			return BoomerangPDSAliasStrategy.this;
+		}
+
+	}
+
+	public boolean isIgnoredMethod(SootMethod methodOf) {
+		return false;
+	}
 }
