@@ -328,8 +328,8 @@ public class Infoflow extends AbstractInfoflow {
 					oneSourceAtATime.nextSource();
 
 				// Create the executor that takes care of the workers
-//				int numThreads = Runtime.getRuntime().availableProcessors();
-				InterruptableExecutor executor = createExecutor(1, true);
+				int numThreads = Runtime.getRuntime().availableProcessors();
+				InterruptableExecutor executor = createExecutor(numThreads, true);
 
 				// Initialize the memory manager
 				IMemoryManager<Abstraction, Unit> memoryManager = createMemoryManager();
@@ -438,7 +438,7 @@ public class Infoflow extends AbstractInfoflow {
 
 					// Register the handler for interim results
 					TaintPropagationResults propagationResults = forwardProblem.getResults();
-					resultExecutor = createExecutor(1, false);
+					resultExecutor = createExecutor(numThreads, false);
 
 					// Create the path builder
 					final IAbstractionPathBuilder builder = new BatchPathBuilder(manager,
