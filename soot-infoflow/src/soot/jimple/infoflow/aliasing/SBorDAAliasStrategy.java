@@ -52,6 +52,7 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 	private final Table<SootMethod, Abstraction, Set<Abstraction>> aliases = HashBasedTable.create();
 	private Set<Key> alreadyQueried = new HashSet<>();
 	private AliasingAlgorithm aliasingAlgorithm;
+	private boolean isBuild;
 
 	public SBorDAAliasStrategy(final InfoflowManager manager, AliasingAlgorithm aliasingAlgorithm) {
 		super(manager);
@@ -131,7 +132,9 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 				if (baseAliases || parameterAliases) {
 					Abstraction absCallee = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 							.appendFields(newAbs.getAccessPath(), appendFieldsA, appendTypesA, taintSubFields), stmt);
-					manager.getForwardSolver().processEdge(new PathEdge<Unit, Abstraction>(d1, u, absCallee));
+					if (absCallee.getAccessPath() != null) {
+						manager.getForwardSolver().processEdge(new PathEdge<Unit, Abstraction>(d1, u, absCallee));
+					}
 				}
 			} else if (u instanceof DefinitionStmt) {
 				DefinitionStmt assign = (DefinitionStmt) u;
@@ -144,7 +147,10 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 							&& (appendFields != null && appendFields.size() > 0)) {
 						Abstraction aliasAbsLeft = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 								.createAccessPath(assign.getLeftOp(), appendFieldsA, taintSubFields), stmt);
-						manager.getForwardSolver().processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsLeft));
+						if (aliasAbsLeft.getAccessPath() != null) {
+							manager.getForwardSolver()
+									.processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsLeft));
+						}
 					}
 				}
 
@@ -157,8 +163,10 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 						if (isAliasedAtStmt(newAbs.getAccessPath(), assign.getLeftOp(), method)) {
 							Abstraction aliasAbsRight = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 									.createAccessPath(assign.getRightOp(), appendFieldsA, taintSubFields), stmt);
-							manager.getForwardSolver()
-									.processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsRight));
+							if (aliasAbsRight.getAccessPath() != null) {
+								manager.getForwardSolver()
+										.processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsRight));
+							}
 						}
 					}
 			}
@@ -186,7 +194,10 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 				}
 			} else if (aliasingAlgorithm == AliasingAlgorithm.DA) {
 				try {
-					Main.v().buildSPG();
+					if (!isBuild) {
+						Main.v().buildSPG();
+						isBuild = true;
+					}
 					res = Main.v().mayAlias(ap.getPlainValue(), m1, (Local) val, m1);
 				} catch (DacongOutOfBudgetException e) {
 					queryCrashed = true;

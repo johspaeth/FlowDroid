@@ -50,6 +50,7 @@ import soot.jimple.infoflow.aliasing.IAliasingStrategy;
 import soot.jimple.infoflow.aliasing.LazyAliasingStrategy;
 import soot.jimple.infoflow.aliasing.NullAliasStrategy;
 import soot.jimple.infoflow.aliasing.PtsBasedAliasStrategy;
+import soot.jimple.infoflow.aliasing.SBorDAAliasStrategy;
 import soot.jimple.infoflow.cfg.BiDirICFGFactory;
 import soot.jimple.infoflow.codeOptimization.DeadCodeEliminator;
 import soot.jimple.infoflow.codeOptimization.ICodeOptimizer;
@@ -104,15 +105,15 @@ import soot.options.Options;
  */
 public class Infoflow extends AbstractInfoflow {
 
-	public static int aliasTimeoutInMilliSeconds;
+	public static int aliasTimeoutInMilliSeconds = 1000;
 
-	public static int SBandDACounter;
+	public static int SBandDACounter = 0;
 
-	public static int aliasQueryCounter;
+	public static int aliasQueryCounter = 0;
 
-	public static int aliasQueryCounterTimeout;
+	public static int aliasQueryCounterTimeout = 0;
 
-	public static long aliasQueryTime;
+	public static long aliasQueryTime = 0;
 
 	private final Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -322,6 +323,8 @@ public class Infoflow extends AbstractInfoflow {
 				oneSourceAtATime.resetCurrentSource();
 			boolean hasMoreSources = oneSourceAtATime == null || oneSourceAtATime.hasNextSource();
 
+			String outputFile = (System.getProperty("outputFile") != null ? System.getProperty("outputFile")
+					: "Report.csv");
 			while (hasMoreSources) {
 				// Fetch the next source
 				if (oneSourceAtATime != null)
@@ -448,8 +451,6 @@ public class Infoflow extends AbstractInfoflow {
 					// initialize it before we start the taint tracking
 					if (config.getIncrementalResultReporting())
 						initializeIncrementalResultReporting(propagationResults, builder);
-					String outputFile = (System.getProperty("outputFile") != null ? System.getProperty("outputFile")
-							: "Report.csv");
 					try {
 						File idea = new File(outputFile);
 						FileWriter writer = null;
@@ -461,7 +462,7 @@ public class Infoflow extends AbstractInfoflow {
 							writer = new FileWriter(outputFile, true);
 						}
 						writer.write("\n");
-						String scene = Scene.v().getSootClassPath() + ";";
+						String scene = Scene.v().getSootClassPath().replace(";", "__") + ";";
 						writer.write(scene);
 						writer.close();
 					} catch (IOException e) {
@@ -475,7 +476,8 @@ public class Infoflow extends AbstractInfoflow {
 					try {
 						FileWriter writer = new FileWriter(outputFile, true);
 						writer.write(this.getConfig().getAccessPathLength() + ";");
-						writer.write(this.getConfig().getAliasingAlgorithm().name() + ";");
+						writer.write(this.getConfig().getAliasingAlgorithm().name()
+								+ (this.getConfig().getUseRecursiveAccessPaths() ? "-rec-ap-shortening" : "") + ";");
 						String time = (timer.elapsed(TimeUnit.MILLISECONDS)) + ";";
 						writer.write(time);
 						String queries = Infoflow.aliasQueryCounter + ";";
@@ -602,16 +604,7 @@ public class Infoflow extends AbstractInfoflow {
 						}
 					} else {
 						memoryWatcher.addSolver(builder);
-						try {
-							FileWriter writer = new FileWriter(outputFile, true);
-							String resultSize = results.getResults().size() + ";";
-							writer.write(resultSize);
-							String aliasQueryTime = Infoflow.aliasQueryTime + ";";
-							writer.write(aliasQueryTime);
-							writer.close();
-						} catch (IOException e) {
-							e.printStackTrace();
-						}
+
 						builder.computeTaintPaths(res);
 						res = null;
 
@@ -705,7 +698,16 @@ public class Infoflow extends AbstractInfoflow {
 			// Provide the handler with the final results
 			for (ResultsAvailableHandler handler : onResultsAvailable)
 				handler.onResultsAvailable(iCfg, results);
-
+			try {
+				FileWriter writer = new FileWriter(outputFile, true);
+				String resultSize = (results == null ? 0 : results.getResults().size()) + ";";
+				writer.write(resultSize);
+				String aliasQueryTime = Infoflow.aliasQueryTime + ";";
+				writer.write(aliasQueryTime);
+				writer.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
 			// Write the Jimple files to disk if requested
 			if (config.getWriteOutputFiles())
 				PackManager.v().writeOutput();
@@ -869,39 +871,15 @@ public class Infoflow extends AbstractInfoflow {
 			aliasingStrategy = new LazyAliasingStrategy(manager);
 			break;
 		case Boomerang:
-			backwardsManager = new InfoflowManager(config, null, new BackwardsInfoflowCFG(iCfg), sourcesSinks,
-					taintWrapper, hierarchy, manager.getAccessPathFactory());
-			backProblem = new BackwardsInfoflowProblem(backwardsManager);
-
-			// We need to create the right data flow solver
-			SolverConfiguration solverConfig1 = config.getSolverConfiguration();
-			switch (solverConfig1.getDataFlowSolver()) {
-			case ContextFlowSensitive:
-				backSolver = new soot.jimple.infoflow.solver.fastSolver.InfoflowSolver(backProblem, executor);
-				break;
-			case FlowInsensitive:
-				backSolver = new soot.jimple.infoflow.solver.fastSolver.flowInsensitive.InfoflowSolver(backProblem,
-						executor);
-				break;
-			default:
-				throw new RuntimeException("Unsupported data flow solver");
-			}
-
-			backSolver.setMemoryManager(memoryManager);
-			backSolver.setPredecessorShorteningMode(
-					pathConfigToShorteningMode(manager.getConfig().getPathConfiguration()));
-			// backSolver.setEnableMergePointChecking(true);
-			backSolver.setMaxJoinPointAbstractions(solverConfig1.getMaxJoinPointAbstractions());
-			backSolver.setMaxCalleesPerCallSite(solverConfig1.getMaxCalleesPerCallSite());
-			backSolver.setSolverId(false);
-			backProblem.setTaintPropagationHandler(backwardsPropagationHandler);
-			backProblem.setTaintWrapper(taintWrapper);
-			if (nativeCallHandler != null)
-				backProblem.setNativeCallHandler(nativeCallHandler);
-
-			memoryWatcher.addSolver((IMemoryBoundedSolver) backSolver);
-
+			backProblem = null;
+			backSolver = null;
 			aliasingStrategy = new BoomerangPDSAliasStrategy(manager);
+			break;
+		case DA:
+		case SB:
+			backProblem = null;
+			backSolver = null;
+			aliasingStrategy = new SBorDAAliasStrategy(manager, getConfig().getAliasingAlgorithm());
 			break;
 		default:
 			throw new RuntimeException("Unsupported aliasing algorithm");

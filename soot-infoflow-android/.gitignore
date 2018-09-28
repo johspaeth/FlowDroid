@@ -7,3 +7,6 @@ bin
 /insecureBank/InsecureBank
 /out.log
 /target
+*.prefs
+*.classpath
+*.project

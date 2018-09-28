@@ -1,2 +1,7 @@
 /bin/
 /testBin/
+/target/
+*.prefs
+*.classpath
+*.project
+/build/

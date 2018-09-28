@@ -152,6 +152,7 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 		BackwardQuery backwardQuery = new BackwardQuery(queryStatement, queryVal);
 		System.out.println("START BOOMERANG " + backwardQuery);
 
+		Infoflow.aliasQueryCounter++;
 		long before = System.currentTimeMillis();
 		BackwardBoomerangResults<NoWeight> results = boomerang.backwardSolveUnderScope(backwardQuery,
 				new FlowDroidContextRequestor(d1));
