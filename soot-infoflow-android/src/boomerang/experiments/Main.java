@@ -6,6 +6,7 @@ import java.io.IOException;
 import org.xmlpull.v1.XmlPullParserException;
 
 import soot.jimple.infoflow.InfoflowConfiguration.AliasingAlgorithm;
+import soot.jimple.infoflow.InfoflowConfiguration.CallgraphAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.PathBuildingAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.PathReconstructionMode;
 import soot.jimple.infoflow.android.SetupApplication;
@@ -33,6 +34,7 @@ public class Main {
 		setupApplication.getConfig().setIgnoreFlowsInSystemPackages(false);
 		setupApplication.getConfig().getPathConfiguration().setPathReconstructionMode(PathReconstructionMode.NoPaths);
 		setupApplication.getConfig().getPathConfiguration().setPathBuildingAlgorithm(PathBuildingAlgorithm.None);
+		setupApplication.getConfig().setCallgraphAlgorithm(CallgraphAlgorithm.SPARK);
 		if (aliasAlgo.equalsIgnoreCase("default")) {
 			setupApplication.runInfoflow("SourcesAndSinks.txt");
 			return;
