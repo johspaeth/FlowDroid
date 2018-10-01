@@ -132,7 +132,7 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 				if (baseAliases || parameterAliases) {
 					Abstraction absCallee = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 							.appendFields(newAbs.getAccessPath(), appendFieldsA, appendTypesA, taintSubFields), stmt);
-					if (absCallee.getAccessPath() != null) {
+					if (absCallee != null && absCallee.getAccessPath() != null) {
 						manager.getForwardSolver().processEdge(new PathEdge<Unit, Abstraction>(d1, u, absCallee));
 					}
 				}
@@ -147,7 +147,7 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 							&& (appendFields != null && appendFields.size() > 0)) {
 						Abstraction aliasAbsLeft = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 								.createAccessPath(assign.getLeftOp(), appendFieldsA, taintSubFields), stmt);
-						if (aliasAbsLeft.getAccessPath() != null) {
+						if (aliasAbsLeft != null && aliasAbsLeft.getAccessPath() != null) {
 							manager.getForwardSolver()
 									.processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsLeft));
 						}
@@ -163,7 +163,7 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 						if (isAliasedAtStmt(newAbs.getAccessPath(), assign.getLeftOp(), method)) {
 							Abstraction aliasAbsRight = newAbs.deriveNewAbstraction(manager.getAccessPathFactory()
 									.createAccessPath(assign.getRightOp(), appendFieldsA, taintSubFields), stmt);
-							if (aliasAbsRight.getAccessPath() != null) {
+							if (aliasAbsRight != null && aliasAbsRight.getAccessPath() != null) {
 								manager.getForwardSolver()
 										.processEdge(new PathEdge<Unit, Abstraction>(d1, u, aliasAbsRight));
 							}
@@ -213,11 +213,7 @@ public class SBorDAAliasStrategy extends AbstractBulkAliasStrategy {
 		// Fallback solution in the case if the access path is not only a local variable
 		// or the analysis
 		// crashed
-		PointsToSet ptsRight = getPointsToSet(val);
-		if (ptsRight == null)
-			return false;
-		PointsToSet ptsTaint = getPointsToSet(ap);
-		return ptsTaint.hasNonEmptyIntersection(ptsRight);
+		return false;
 	}
 
 	private class Key {

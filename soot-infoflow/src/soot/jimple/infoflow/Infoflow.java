@@ -700,7 +700,8 @@ public class Infoflow extends AbstractInfoflow {
 				handler.onResultsAvailable(iCfg, results);
 			try {
 				FileWriter writer = new FileWriter(outputFile, true);
-				String resultSize = (results == null ? 0 : results.getResults().size()) + ";";
+				String resultSize = (results == null ? 0
+						: (results.getResults() == null ? 0 : results.getResults().size())) + ";";
 				writer.write(resultSize);
 				String aliasQueryTime = Infoflow.aliasQueryTime + ";";
 				writer.write(aliasQueryTime);
