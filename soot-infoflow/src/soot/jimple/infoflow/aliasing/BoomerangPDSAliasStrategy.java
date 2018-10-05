@@ -170,7 +170,7 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 				}
 
 				@Override
-				public void stackElement(Statement callSite, Statement parent) {
+				public void stackElement(Statement parent) {
 					for (Statement cs : s.getPredsOf(parent)) {
 						aliasesAtCallSite.put(cs, new QueryWithAccessPath(e.getKey(), newAbs));
 					}
