@@ -376,19 +376,6 @@ public class BoomerangPDSAliasStrategy extends AbstractBulkAliasStrategy {
 			Statement callSite = cont.getStmt();
 			Abstraction abstraction = cont.getAbstraction();
 			Set<Context> boomerangCallerContexts = new HashSet<>();
-			if (zeroValue != null && zeroValue.equals(d1)) {
-				// If we reached the 0-Fact the analysis propagates to all callers
-				Collection<Unit> callersOf = icfg.getCallersOf(callSite.getMethod());
-				for (Unit call : callersOf) {
-					SootMethod callee = icfg.getMethodOf(call);
-					if (isIgnoredMethod(callee))
-						continue;
-					Statement calleeCallSite = new Statement((Stmt) call, callee);
-					FlowDroidContext newContext = new FlowDroidContext(calleeCallSite, d1);
-					boomerangCallerContexts.add(newContext);
-				}
-				return boomerangCallerContexts;
-			}
 
 			// If we did not has the 0-Fact as start fact, we query the incomingMap to see
 			// via which
