@@ -7,8 +7,6 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import soot.jimple.infoflow.InfoflowConfiguration.AliasingAlgorithm;
 import soot.jimple.infoflow.InfoflowConfiguration.CallgraphAlgorithm;
-import soot.jimple.infoflow.InfoflowConfiguration.PathBuildingAlgorithm;
-import soot.jimple.infoflow.InfoflowConfiguration.PathReconstructionMode;
 import soot.jimple.infoflow.android.SetupApplication;
 import soot.jimple.infoflow.taintWrappers.EasyTaintWrapper;
 
@@ -32,9 +30,12 @@ public class Main {
 		setupApplication.getConfig().setMaxThreadNum(1);
 		setupApplication.getConfig().getSolverConfiguration().setMaxCalleesPerCallSite(-1);
 		setupApplication.getConfig().setIgnoreFlowsInSystemPackages(false);
-		setupApplication.getConfig().getPathConfiguration().setPathReconstructionMode(PathReconstructionMode.NoPaths);
-		setupApplication.getConfig().getPathConfiguration().setPathBuildingAlgorithm(PathBuildingAlgorithm.None);
+//		setupApplication.getConfig().getPathConfiguration().setPathReconstructionMode(PathReconstructionMode.NoPaths);
+//		setupApplication.getConfig().getPathConfiguration().setPathBuildingAlgorithm(PathBuildingAlgorithm.None);
 		setupApplication.getConfig().setCallgraphAlgorithm(CallgraphAlgorithm.SPARK);
+		setupApplication.getConfig().setIncrementalResultReporting(false);
+		setupApplication.getConfig().setMergeDexFiles(true);
+		setupApplication.getConfig().setPathAgnosticResults(true);
 		if (aliasAlgo.equalsIgnoreCase("default")) {
 			setupApplication.runInfoflow("SourcesAndSinks.txt");
 			return;
